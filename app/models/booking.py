@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import DateTime, func, ForeignKey, CheckConstraint, text
+from sqlalchemy import DateTime, func, ForeignKey, CheckConstraint, text, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from .base import Base
@@ -24,16 +24,12 @@ class Booking(Base):
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     room_id: Mapped[int] = mapped_column(ForeignKey("rooms.id", ondelete="RESTRICT"))
-    start_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[BookingStatus] = mapped_column(
+        Enum(BookingStatus, name="booking_status"), server_default=text("'pending'")
     )
-    end_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    status: Mapped[BookingStatus] = mapped_column()
 
     __table_args__ = (
         CheckConstraint("end_time > start_time", name="check_time_order"),

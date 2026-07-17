@@ -10,7 +10,7 @@ class Room(Base):
     building_id: Mapped[int] = mapped_column(
         ForeignKey("buildings.id", ondelete="RESTRICT")
     )
-    title: Mapped[str] = mapped_column()
+    title: Mapped[str | None] = mapped_column()
     room_num: Mapped[str] = mapped_column()
     room_type: Mapped[str] = mapped_column()
     capacity: Mapped[int] = mapped_column()

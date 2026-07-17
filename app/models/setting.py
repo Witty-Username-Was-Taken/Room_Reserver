@@ -8,4 +8,4 @@ class Setting(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column()
     value: Mapped[str] = mapped_column()
-    comment: Mapped[str] = mapped_column()
+    comment: Mapped[str | None] = mapped_column()
