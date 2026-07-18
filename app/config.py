@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
 
-settings = Settings()
+settings = Settings()  # pyright: ignore[reportCallIssue]
 
 print(settings.database_url)
 print(settings.version)

@@ -1,8 +1,7 @@
 from typing import Annotated
-from fastapi import FastAPI, Depends, HTTPException, APIRouter
-from sqlalchemy.orm import Session
+from fastapi import FastAPI, Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_, func, text
+from sqlalchemy import select, or_, and_, func
 from app.db import get_session
 from datetime import date, time, datetime, timezone, timedelta
 from ..models.booking import Booking, BookingStatus
