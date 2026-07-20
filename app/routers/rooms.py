@@ -1,14 +1,12 @@
 from typing import Annotated
-from fastapi import FastAPI, Depends, APIRouter
+from fastapi import Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, func
-from app.db import get_session
 from datetime import date, time, datetime, timezone, timedelta
-from ..models.booking import Booking, BookingStatus
-from ..models.room import Room
-from ..schemas.rooms import BusyInterval, RoomResponse
 
-app = FastAPI()
+from app.db import get_session
+from app.models import Booking, BookingStatus, Room
+from app.schemas import BusyInterval, RoomResponse
 
 router = APIRouter(prefix="/rooms", tags=["Rooms"])
 
