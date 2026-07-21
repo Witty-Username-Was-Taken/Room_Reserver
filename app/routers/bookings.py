@@ -76,3 +76,29 @@ async def create_booking(
     await db.flush()
     await db.refresh(booking)
     return booking
+
+
+@router.post("/{id}/confirm", response_model=BookingResponse, status_code=200)
+async def confirm_booking(
+    id: int,
+    user_id: Annotated[int, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+):
+
+    stmt = (
+        update(Booking)
+        .where(
+            Booking.id == id,
+            Booking.user_id == user_id,
+            Booking.status == BookingStatus.pending,
+            Booking.expires_at > func.now(),
+        )
+        .values(status=BookingStatus.confirmed, expires_at=None)
+        .returning(Booking)
+    )
+
+    booking = (await db.execute(stmt)).scalar_one_or_none()
+
+    if booking is None:
+        raise HTTPException(status_code=410, detail="Hold no longer available")
+    return booking
