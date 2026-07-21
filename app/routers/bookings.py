@@ -69,7 +69,7 @@ async def create_booking(
         user_id=user_id,
         start_time=body.start_time,
         end_time=body.end_time,
-        expires_at=func.now() + func.make_interval(0, 0, 0, 0, 0, int(ttl_row)),
+        expires_at=func.now() + func.make_interval(0, 0, 0, 0, 0, int(ttl_row)),  # pyright: ignore[reportArgumentType]
     )
 
     db.add(booking)
