@@ -97,84 +97,56 @@ Inclusive start, exclusive end. A 1:00–2:00 and a 2:00–3:00 booking share th
 - Style: always write `= mapped_column()` even when empty, so every column name is a real, referenceable binding (the unbound-`email` lesson).
 - `models/__init__.py` imports all model modules — that's what registers tables on `Base.metadata` for Alembic; a missing import silently drops a table from autogenerate.
 
+## D17. Identity and policy never come from the client
+Request schemas carry what the client legitimately knows (room, times). `user_id` derives from auth (placeholder `get_current_user` dependency until JWT — swapping it changes one function body, zero endpoint signatures). `expires_at` is server-computed: `now() + hold_ttl_minutes` from `settings`, **on the database clock** (`func.now() + make_interval`) — every expiry comparison uses DB `now()`, so DB issues the timestamps; app-server clock skew can't create disagreement.
+
+## D18. Error taxonomy
+**422** = inherently invalid (could never succeed): end ≤ start, misaligned times — enforced in Pydantic `model_validator`, so handlers only see satisfiable requests. **404** = room doesn't exist. **409** = valid but conflicts with current state — two sources, same code: the pre-check (courtesy) and the exclusion constraint (law), the latter translated by an app-level `IntegrityError` handler matching on `constraint_name == "no_overlapping_room_bookings"` (never on message strings). Handler falls through and re-raises anything else — masking real integrity bugs as 409s would be silent corruption.
+
+## D19. Write path order: kill → pre-check → insert
+`POST /bookings` first runs the D4 expire-CAS scoped to the room (opportunistic kill), so dead holds release before they can block; then the courtesy overlap check; then flush. **`flush()` in the handler is load-bearing:** it forces the INSERT (and any exclusion violation) to happen inside the handler where the exception handler can translate it — commit stays with the `get_session` dependency. Handlers never commit.
+
+## D20. Confirm is idempotent per-owner
+`POST /bookings/{id}/confirm`: single CAS UPDATE (id + owner + pending + unexpired → confirmed, expires_at=NULL) with `RETURNING`; on miss, one fallback SELECT — if the booking exists, is the caller's, and is confirmed → 200 with the booking (double-taps and client retries succeed); otherwise → **410**. Rejected alternative: strict CAS (410 on repeat) — punishes retries for pedantry. Accepted nuance: nonexistent ids get 410, not 404 — conflates "gone" with "never was," chosen to avoid leaking id-space.
+
+## D21. Bootstrap: four mechanisms, four owners
+Schema + system-required rows (hold TTL, seeded with `ON CONFLICT (name) DO NOTHING` + unique constraint on `settings.name`) → **migrations**. First operator → **`create_admin` CLI** (argon2 via passlib; password on argv accepted for dev, `getpass` noted as upgrade path). Real buildings/rooms → **admin endpoints** (milestone 3 — the admin surface IS the bootstrap path). Dev fixtures → **idempotent seed script**. Rule: migrations = must be true everywhere; psql = inspection only; seeds = convenience.
+
+## D22. Dependency layout
+`db.py` = connection machinery (engine, `SessionLocal`). `deps.py` = request-scope dependencies (`get_session`, `get_current_user`). Routers import only from `deps`. One definition per dependency — duplicated copies drift.
+
+## D16a. Packaging addendum
+Project is an installed package (hatchling backend, `build-backend = "hatchling.build"`, explicit `packages = ["app"]`, empty `app/__init__.py` — no side effects in package inits; `models/__init__.py` is the deliberate exception, its side effect is the point). **Console script deferred:** `[project.scripts]` entry disabled — editable-install stub intermittently vanished (suspected VS Code extension interaction; under watch). Invocation: `uv run python -m app.create_admin`.
+
 ## Process notes
 - Four times a settled decision evaporated between discussion and artifact (slots→bookings; status/expires_at columns; truncated status enum; missing WHERE on the exclusion constraint). The log exists to close that gap: record when decided, diff artifacts against the log before review.
 - Review findings decay in ~a day; interesting fixes land, boring ones don't. Discipline: fix the WHOLE list before the next diff.
 
 ## Open items queue
-1. Expiry mechanism: lazy vs. sweep (D4 — now operational tuning, not architecture)
-2. JWT vs. session cookies (D6)
+1. Expiry sweep (Celery beat) — opportunistic kill (D19) covers the write path; reads self-filter; sweep still owed for global cleanup + waitlist promotion later (D4)
+2. JWT vs. session cookies; replace placeholder `get_current_user` (D6/D17)
 3. Hours-change reconciliation when future bookings exist (D7)
-4. Overnight-hours wraparound in availability logic (D7 — milestone 2)
+4. Overnight-hours wraparound in availability logic (D7)
 5. Soft-delete for rooms (D14)
+6. Past-times validation in `BookingRequest` (tolerance TBD — probe suite currently books the near-future safely)
+7. Campus timezone: availability day-window is UTC-midnight placeholder; needs `campus_timezone` setting (D9)
+8. Console-script instability post-mortem (D16a)
+9. Building-hours enforcement on booking (rooms bookable outside operating hours right now — milestone 2 remainder)
 
 ---
 
-# Milestone 1 Closeout — Verification Probes
+# Milestone 2 Evidence (create + confirm paths) — in progress
 
-Schema frozen 2026-07-17. Every probe below was run by hand against the migrated database.
-Each proves a specific clause of the D5/D15 design. (Transcripts lightly trimmed; replace
-representative output with your actual psql output where it differs.)
+## Probe suite (automated, asserting)
+`probe.py` against the live API: **422** on end-before-start (Pydantic validator, error body names the violation) · **201** on create — response carries db-clock timestamps proving the TTL chain: `created_at 00:02:17` → `expires_at 00:07:17`, exactly `hold_ttl_minutes=5` from settings · **409** courtesy on duplicate slot.
 
-## Probe 1 — Exclusion scope: overlap is per-room (`room_id WITH =`)
-```sql
-INSERT INTO bookings (user_id, room_id, start_time, end_time, status)
-VALUES (1, 1, '2026-07-20 14:00+00', '2026-07-20 15:00+00', 'confirmed');
--- INSERT 0 1
-INSERT INTO bookings (user_id, room_id, start_time, end_time, status)
-VALUES (2, 2, '2026-07-20 14:00+00', '2026-07-20 15:00+00', 'confirmed');
--- INSERT 0 1  ← same time, different room: allowed
-```
+## Resurrection probe
+Hold id 25 hand-expired via psql (`SET expires_at = now() - interval '1 second'`); immediate re-create of the same slot → **201** (id 26). Proves the opportunistic kill (D19 step 1): dead holds release inventory on the write path without a sweep.
 
-## Probe 2 — Half-open bounds: back-to-back bookings (`[)`, D15)
-```sql
-INSERT INTO bookings (user_id, room_id, start_time, end_time, status)
-VALUES (2, 1, '2026-07-20 15:00+00', '2026-07-20 16:00+00', 'confirmed');
--- INSERT 0 1  ← shares the 15:00 boundary instant with probe 1; no collision
-```
+## Two-terminal race — API vs. frozen rival (both endings)
+psql holds an uncommitted overlapping INSERT; live `curl` to POST /bookings. Pre-check **passes** (uncommitted rival invisible under READ COMMITTED — TOCTOU gap demonstrated in our own endpoint); flush hangs on the constraint's index; then:
+- Rival **COMMIT** → `HTTP/1.1 409` `{"detail":"Time slot was just taken"}` — IntegrityError handler, constraint-name match, law translated to API.
+- Rival **ROLLBACK** → `HTTP/1.1 201` (id 28) — the API waited out an evaporating rival and won. Eager failure would have been wrong; waiting was correct.
 
-## Probe 3 — Partial constraint: cancelled rows release their range (`WHERE status IN ...`)
-```sql
-UPDATE bookings SET status = 'cancelled' WHERE room_id = 1 AND start_time = '2026-07-20 14:00+00';
--- UPDATE 1
-INSERT INTO bookings (user_id, room_id, start_time, end_time, status)
-VALUES (2, 1, '2026-07-20 14:00+00', '2026-07-20 15:00+00', 'confirmed');
--- INSERT 0 1  ← overlaps the cancelled booking exactly; allowed, because
---               cancelled rows physically leave the partial GiST index
-```
-
-## Probe 4 — The race: two connections, one referee (TOCTOU immunity)
-Two psql sessions. A inserts inside an open transaction and does not commit — a request
-frozen mid-flight. B attempts an overlapping insert.
-
-```
--- Terminal A                          -- Terminal B
-BEGIN;
-INSERT ... 14:00–15:00 ...;
--- INSERT 0 1 (uncommitted)
-                                       BEGIN;
-                                       INSERT ... 14:30–15:30 ...;
-                                       -- (hangs — waiting on A's fate)
-COMMIT;
-                                       -- ERROR: conflicting key value violates
-                                       --   exclusion constraint
-                                       --   "no_overlapping_room_bookings"
-                                       ROLLBACK;
-```
-
-Rerun with A ending in `ROLLBACK` instead: B unfreezes and its insert **succeeds** —
-the conflict evaporated with A's transaction, so waiting (not failing early) was correct.
-
-**Why this matters:** the hang is Postgres serializing the conflict inside the GiST index —
-the referee no application-level check-then-insert can have. This is the slow-motion version
-of the milestone-2 load test (100 concurrent requests, exactly one winner).
-
-## Also verified via `\d bookings`
-- CHECK constraints present with correct `% 15` (post-`%%` escaping fix) and second == 0
-- `tstzrange(start_time, end_time, '[)')` bounds intact
-- Partial WHERE compiled to `status = ANY (ARRAY['pending','confirmed']::booking_status[])` — Postgres's spelling of `IN`, same semantics
-- FKs with `ON DELETE RESTRICT` per D14
-
-**Milestone 1: complete.** Next: FastAPI skeleton, async session-per-request, POST /bookings
-(pre-check for UX, constraint for correctness), CAS confirm endpoint (409/410), then the
-automated concurrency test.
+## Outstanding evidence
+Confirm-path probes (200 happy, 410 post-expiry, double-confirm 200 per D20), 404-room probe, and the automated 100-client race (`assert winners == 1`) — next session.
