@@ -1,31 +1,21 @@
 import requests
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def get_current_time():
-    now = datetime.now()
-    current_minute = now.minute
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 
-    rounded_minute = 15 * round(current_minute / 15)
-
-    if rounded_minute == 60:
-        closest_time = now.replace(minute=0, second=0, microsecond=0) + timedelta(
-            hours=1
-        )
-    else:
-        closest_time = now.replace(minute=rounded_minute, second=0, microsecond=0)
-
-    return closest_time
+    return now + timedelta(minutes=(15 - (now.minute % 15)))
 
 
 def create_booking(start_time: datetime):
     url = "http://127.0.0.1:8000/bookings"
 
     payload = {
-        "room_id": "1",
-        "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_time": (start_time + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S"),
+        "room_id": 1,
+        "start_time": start_time.isoformat(),
+        "end_time": (start_time + timedelta(minutes=15)).isoformat(),
     }
 
     response = requests.post(url, json=payload)
@@ -37,11 +27,9 @@ def invalid_times_booking(start_time: datetime):
     url = "http://127.0.0.1:8000/bookings"
 
     payload = {
-        "room_id": "1",
-        "start_time": (start_time + timedelta(minutes=15)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        ),
-        "end_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "room_id": 1,
+        "start_time": (start_time + timedelta(minutes=15)).isoformat(),
+        "end_time": start_time.isoformat(),
     }
 
     response = requests.post(url, json=payload)
@@ -51,17 +39,16 @@ def invalid_times_booking(start_time: datetime):
 
 def main():
     current_time = get_current_time()
-
     bad_times = invalid_times_booking(current_time)
     booking = create_booking(current_time)
     conflict = create_booking(current_time)
-    time.sleep(301)  # Wait just a little over 5 minutes
-    taking_expired = create_booking(current_time)
 
-    print(f"Bad Times: {bad_times.json()}")
-    print(f"Booking: {booking.json()}")
-    print(f"Conflict: {conflict.json()}")
-    print(f"Taking expired booking: {taking_expired.json()}")
+    # Expirations of booking test can be checked using UPDATE bookings SET expires_at = now() - interval '1 second' WHERE id = {returned_id}
+    # TODO: implement DB connection to sent query and update
+
+    assert bad_times.status_code == 422
+    assert booking.status_code == 201
+    assert conflict.status_code == 409
 
 
 if __name__ == "__main__":

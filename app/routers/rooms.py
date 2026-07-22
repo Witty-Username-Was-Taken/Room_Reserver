@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, and_, func
 from datetime import date, time, datetime, timezone, timedelta
 
-from app.db import get_session
+from app.deps import get_session
 from app.models import Booking, BookingStatus, Room
 from app.schemas import BusyInterval, RoomResponse
 

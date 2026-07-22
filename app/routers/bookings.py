@@ -3,7 +3,7 @@ from sqlalchemy import func, select, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends, APIRouter, HTTPException
 
-from app.db import get_session
+from app.deps import get_session
 from app.models import Room, Booking, Setting, BookingStatus
 from app.schemas import BookingRequest, BookingResponse
 
@@ -85,7 +85,7 @@ async def confirm_booking(
     db: Annotated[AsyncSession, Depends(get_session)],
 ):
 
-    stmt = (
+    update_stmt = (
         update(Booking)
         .where(
             Booking.id == id,
@@ -97,7 +97,18 @@ async def confirm_booking(
         .returning(Booking)
     )
 
-    booking = (await db.execute(stmt)).scalar_one_or_none()
+    booking = (await db.execute(update_stmt)).scalar_one_or_none()
+
+    if booking is None:  # CAS missed: expired, someone else's, or already confirmed
+        booking = (
+            await db.execute(
+                select(Booking).where(
+                    Booking.id == id,
+                    Booking.user_id == user_id,
+                    Booking.status == BookingStatus.confirmed,
+                )
+            )
+        ).scalar_one_or_none()
 
     if booking is None:
         raise HTTPException(status_code=410, detail="Hold no longer available")
