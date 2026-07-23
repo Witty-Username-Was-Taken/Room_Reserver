@@ -1,4 +1,5 @@
 import requests
+import psycopg2
 from datetime import datetime, timedelta, timezone
 
 
@@ -36,11 +37,26 @@ def invalid_times_booking(start_time: datetime):
     return response
 
 
+def confirm_booking(booking_id: int):
+    url = f"http://127.0.0.1:8000/bookings/{booking_id}/confirm"
+
+    response = requests.post(url)
+
+    return response
+
+
 def main():
     current_time = get_current_time()
     bad_times = invalid_times_booking(current_time)
     booking = create_booking(current_time)
     conflict = create_booking(current_time)
+
+    print(booking.json()["id"])
+
+    booking_id = booking.json()["id"]
+
+    confirm = confirm_booking(booking_id)
+    confirm_duplicate = confirm_booking(booking_id)
 
     # Expirations of booking test can be checked using UPDATE bookings SET expires_at = now() - interval '1 second' WHERE id = {returned_id}
     # TODO: implement DB connection to sent query and update
@@ -48,6 +64,9 @@ def main():
     assert bad_times.status_code == 422
     assert booking.status_code == 201
     assert conflict.status_code == 409
+    print(confirm.json())
+    # assert confirm.status_code == 200
+    # assert confirm_duplicate.status_code == 200
 
 
 if __name__ == "__main__":

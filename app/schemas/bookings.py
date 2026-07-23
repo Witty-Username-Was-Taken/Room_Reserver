@@ -24,7 +24,7 @@ class BookingResponse(BaseModel):
     room_id: int
     start_time: datetime
     end_time: datetime
-    expires_at: datetime
+    expires_at: datetime | None
     created_at: datetime
     status: BookingStatus
     model_config = ConfigDict(from_attributes=True)
